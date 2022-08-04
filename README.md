@@ -17,7 +17,7 @@ These scripts utilize role assumptions so there are a few places where you will 
 
 There are also permission json files you can use for granting permission. Replace any values inside {} with approriate ones from your organization.
 
-It is assumed you have a working knowledge of the following:
+It is assumed you have a working knowledge of the following:  
 PowerShell  
 AWS Tools for PowerShell  
 AWS IAM  
