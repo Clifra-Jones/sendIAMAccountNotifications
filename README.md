@@ -1,4 +1,4 @@
-# AWS IAM Password Notification and anc Access Key Management LAMBDA scripts
+# AWS IAM Password Notification and and Access Key Management LAMBDA scripts
 
 The powershell scripts in this repository are used in AWS LAMBDA function to perform the following tasks.
 
@@ -17,13 +17,22 @@ These scripts utilize role assumptions so there are a few places where you will 
 
 There are also permission json files you can use for granting permission. Replace any values inside {} with approriate ones from your organization.
 
+It is assumed you have a working knowledge of the following:
+PowerShell  
+AWS Tools for PowerShell  
+AWS IAM  
+AWS Lambda  
+AWS Secrets Manager  
+AWS Key Management System  
+AWS Simple Mail Service  
+
 ## Passwords
-Password expiration dates are retrieved from the IAM Credential Report. This report is generated on a scheduled basis withing AWN. The expiration dates are determined by your password policy in your AWS Accounts.  
+Password expiration dates are retrieved from the IAM Credential Report. This report is generated on a scheduled basis withing AWS. The expiration dates are determined by your password policy in your AWS Accounts.  
 
 Notifications are sent starting 15 days prior to expiration.
 
 ## Access Keys
-You will store IAM Access Keys in Secrets Manager in a Key Value pair as: AccessKeyID and SecreAccessKey.
+You will store IAM Access Keys in Secrets Manager in a Key Value pair as: AccessKeyID and SecretAccessKey.
 
 The script will check the age of the keys in IAM and perform the following functions when the keys are at the designated age.
 
@@ -64,7 +73,7 @@ Create an understandable alias to identify this key.
 Set key rotion to automatic.
 
 **Key policy**  
-Allow account from your other AWS Account to use this key.
+Allow account from your other AWS Account to use this key.  
 [KMS Key Policy](./policies/KMS_Key_Policy.json)
 
 ### IAM Users, Groups and Roles.
@@ -79,11 +88,12 @@ In each of your accounts create a group named 'SecretManagerUsers', any IAM user
 This group should have the following permissions applied.
 (I use inline permissions to prevent these permissions from inadvertantly being applied to other users/groups)
 
-[Use Secrets Manager KMS Key](./policies/KMS_Key_Policy.json)  
-This policy only applies for cross account access. Use this policy in accounts that need to access secrets stored in another account. (Note: the text '${aws:username}' should not be changed.)
+[Use Secrets Manager KMS Key](./policies/KMS_KEY_Access.json)  
+This policy only applies for cross account access. Use this policy in accounts that need to access secrets stored in another account. 
 
 [IAM User Read Self](./policies/IAM_User_Read_Self.json)  
-This policy allows the use to read thier own IAM Account.
+This policy allows the use to read thier own IAM Account.  
+(Note: the text '${aws:username}' should not be changed.)  
 
 [Secrets Manager Get Secret Value](./policies/Secrets_Manager_get_Secret_Value.json)  
 This allows users to retrieve the secret value from secrets they have access to.
@@ -95,13 +105,13 @@ The following roles are used by this process.
 This role exists in your primary account that holds your secrets. This role will be assumed by the Lambda functions in your other accounts in order to manage secrets.
 
 *Permissions*  
-[Manage Secrets Policy](./policies/ManageSecrets.json)  
+[Manage Secrets Policy](./policies/ManageSecrets_policy.json)  
 
 *Trust Relationships*  
 [Manage Secrets Trust Relationship](./policies/ManagedSecrets_Trust_Relationships.json)  
 Add all accounts that will need to assume this role.
 
-**Lambda Execution Role**
+**Lambda Execution Role**  
 The role that is assigned to your Lambda function should have the following permissions.
 
 *AmazonEC2ReadOnlyAccess*  
