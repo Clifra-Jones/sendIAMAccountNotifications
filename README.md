@@ -1,0 +1,132 @@
+# AWS IAM Password Notification and anc Access Key Management LAMBDA scripts
+
+The powershell scripts in this repository are used in AWS LAMBDA function to perform the following tasks.
+
+1. Inform IAM users that thier password are about to expire or alrady have expired.
+2. Rotate IAM Access Keys and store the newly created keys in AWS Secrets Manager.
+
+These scripts were designed to operate withing my organization but can be easily edited to finction in your AWS opraanization.  
+There are 2 scripts:
+
+1. Under MainAccount_SendIAMNotifications is a script for use in your main AWS Account. This is the account that holds your secrets.
+It is AWS best practice to keep all your secrets in one main account, but this is entirely up to you.
+2. Under CrossAccount_SendIAMNotifications is a script designed to retrieve secrets from your main account.
+
+These scripts utilize role assumtions sp there are a few places where you will need to replace the role ARN with the one for your organization.
+
+## Passwords
+Password expiration dates are retrieved from the IAM Credential Report. This report is generated on a scheduled basis withing AWN. The expiration dates are determined by your password policy in your AWS Accounts.  
+
+Notifications are sent starting 15 days prior to expiration.
+
+## Access Keys
+IAM Access Keys are kept in Secrets Manager in a Key Value pair as: AccessKeyID and SecreAccessKey.
+
+The script will check the age of the key and perform the following functions when the keys are at the designated age.
+
+80 Days: Generate a new set of keys and update the secret associated with the user.
+90 Days: Deactivate the keys.
+111 Days: Delete the keys.
+
+## Secrets Manager, KMS and IAM
+For every user that is granted access keys a Secret must be created in Secrets Manager. 
+
+### Secrets Manager
+The IAM User should have a Secret in Secrets Manager setup to hold their access Keys.  
+
+**SecretName**: This should be something identifiable such as the IAM Users's username. If this is for a cross account append with an account identifier, i.i. _devops.
+
+**Encryption Key**
+If this secret is for a IAM User inthe same account then you can use the default 'aws/secretsmanager' encryption key. If this is for a cross account IAM User you must use a custom KMS key. See the KMS section below.
+
+**Secret Value**
+The secret value is a Key/Value pair in the following format.
+AccessKeyId     : IAM Access Key ID
+SecretAccessKey : IAM Secret Access Key
+
+The Key names are case sensative so make sure the case is correct when creating the secret value.
+
+**Permissions**
+Grant the IAM User the 'secretsmanager:GetSecretValue' permission.
+[User Secret Permission Example](./policies/SecretPermission.json)
+
+### Key Management Service (KMS)
+In order to decrypt secrets from another account you need use a custom KMS key to encrypt your secrets.
+
+**Alias**
+Create an understandable alias to identofy this key.
+
+**Key Rotation**
+Set key rottion to automatic.
+
+**Key policy**
+Allow account from your other AWS Account to use this key.
+[KMS Key Policy](./policies/KMS_Key_Policy.json)
+
+### IAM Users, Groups and Roles.
+
+#### IAM Users
+Each user with a managed IAM Access Key but have a tag named 'SecretName' whos value is the secret name of thier associated secret.
+
+#### Iam Groups
+In eash of your accounts create a group named 'SecretManagerUsers', any IAM user who will need to retrieve secrets must be a member of this group.
+
+**Permissions**
+This group should have the following permissions applied.
+(I use inline permissions top prevent these permissions from inadvertantly being applied to other users/groups)
+
+[Use Secrets Manager KMS Key](./policies/KMS_Key_Policy.json)
+This policy only applies for cross account access. Use this policy in accounts that need to access secrets stored in another account. (Note: the test '${aws:username}' should not be changed.)
+
+[IAM User Read Self](./policies/IAM_User_Read_Self.json)
+This policy allows the use to read thier own IAM Account.
+
+[Secrets Manager Get Secret Value](./policies/Secrets_Manager_get_Secret_Value.json)
+This allows users to retrieve the secret value from secrets they have access to.
+
+#### Roles
+The following roles are used by thsi process.
+
+**Manage_Secrets_Role**
+This role exists in yout primary account that holds your secrets. This role will be assumed by the Lambda functions in your other accounts in order to manage secrets.
+
+*Permissions*
+[Manage Secrets Policy](./policies/ManageSecrets.json)
+
+*Trust Relationships*
+[Manage Secrets Trust Relationship](./policies/ManagedSecrets_Trust_Relationships.json)
+Add all accounts that will need to assume this role.
+
+**Lambda Execution Role**
+The role that is assigned to your Lambda function should habe the following permissions.
+
+*AmazonEC2ReadOnlyAccess*
+This is required to retrieve the Account # the function is running under.
+
+*IAMReadOnlyAccess*
+This is required to read the IAM Accounts being managed.
+
+*AWSLambdaBasicExecutionRole*
+This grants all necessary permission to execute the Lambda function.
+
+Add the following inline policies.
+[Assume Role Managed Secrets Role](./policies/Assume_Role_Manage_Secrets_Role.json)
+
+[KMS Key Access](./policies/KMS_KEY_Access.json)
+
+## Lambda
+You cnanot edit PowerShell scripts in the Lambda console to create your Lambda function using the Publish-AWSPowerShellLambda command.  
+If you have a lot of roles in your IAM Roles it is probably best to pre-create your Lambda execution role and supply the ARN with this command.
+
+**Triggers**
+Create an Event Bridge trigger to execute your function. Once per day is sufficuent.
+
+**Permissions**
+Your Lambda execution role should be already assigned when yo published your function.
+
+**Asynchronous Invocation**
+Make sure to set "Retry attemtps" to 0. This will prevent the function from running again in the case of an error. (The default is 3)
+
+## Cloud Watch
+Create a Cloud Watch Alarm for Lambda function error with the threshold of: Errors > 0 for 1 datapoints within 1 days.
+Syncrube an SNS topic to send you emails if the ALarm occurs.

@@ -1,0 +1,16 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "VisualEditor1",
+            "Effect": "Allow",
+            "Action": [
+                "kms:Decrypt",
+                "kms:GenerateDataKey*"
+            ],
+            "Resource": [
+                "arn:aws:kms:us-east-1:{MainAccount#}:key/{KeyId}"
+            ]
+        }
+    ]
+}
