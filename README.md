@@ -2,10 +2,11 @@
 
 The powershell scripts in this repository are used in AWS LAMBDA function to perform the following tasks.
 
-1. Inform IAM users that thier password are about to expire or alrady have expired.
+1. Inform IAM users that thier password are about to expire or already have expired.
 2. Rotate IAM Access Keys and store the newly created keys in AWS Secrets Manager.
 
-These scripts were designed to operate withing my organization but can be easily edited to finction in your AWS opraanization.  
+These scripts were designed to operate withing my organization but can be easily edited to function in your AWS opranization.  
+
 There are 2 scripts:
 
 1. Under MainAccount_SendIAMNotifications is a script for use in your main AWS Account. This is the account that holds your secrets.
@@ -127,6 +128,20 @@ Your Lambda execution role should be already assigned when yo published your fun
 **Asynchronous Invocation**
 Make sure to set "Retry attemtps" to 0. This will prevent the function from running again in the case of an error. (The default is 3)
 
+## Simple Mail Service (SES)
+Setup SES and verify your domains.
+If you are sending a low volume of email and you only sending to your owned domains then you can leave SES in 'sandbox' mode.
+From the Account Dashboard under Authentication create SMTP Credentials. Save these credentials and create a secret in Secrets Manager to hold these credentials.
+Create the Secret Value as a Key/Value pair as:
+SmtpUsername: SES User access Key
+SmtpPassword: SES User Secrets Key
+
+In the scripts in the section where we retrieve the SES credentials from Secrets Manager change the Secret ID to match the secret name created.
+
+In the Main Account script there is a section specifically used for this user.  
+You cannot generate new keys in IAM for this user. THEY WILL NOT WORK WITH SES. Therefor we exempt this user from any Access Key management. The default name for the SES User starts with 'ses-smtp-user'. If you change this name then modify the code where it checks for this name.
+
 ## Cloud Watch
 Create a Cloud Watch Alarm for Lambda function error with the threshold of: Errors > 0 for 1 datapoints within 1 days.
 Syncrube an SNS topic to send you emails if the ALarm occurs.
+
