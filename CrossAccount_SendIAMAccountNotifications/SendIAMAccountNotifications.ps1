@@ -20,6 +20,8 @@
 # Uncomment to send the input event to CloudWatch Logs
 # Write-Host (ConvertTo-Json -InputObject $LambdaInput -Compress -Depth 5)
 
+$ErrorActionPreference = Stop
+
 Write-Host "Getting IAM Credential Log"
 Request-IAMCredentialReport -Force |Out-Null
 
@@ -91,21 +93,39 @@ function RotateKeys() {
     $SecretNameURN = "arn:aws:secretsmanager:us-east-1:268928949034:secret:{0}" -f $SecretName
     switch ($Action) {
         'New' {
-            $newAccessKey = New-IAMAccessKey -UserName $IamUserName            
+            try {
+                $newAccessKey = New-IAMAccessKey -UserName $IamUserName
+            } catch {
+                throw $_
+            }
+
             $AccessKeys.AccessKeyID = $newAccessKey.AccessKeyID
             $AccessKeys.SecretAccessKey = $newAccessKey.SecretAccessKey
             $AccessKeysJSON = $newAccessKey | Select-Object AccessKeyID, SecretAccessKey | ConvertTo-Json -Compress
-            Update-SECSecret -SecretId $SecretNameURN -SecretString $AccessKeysJSON -Credential $msrCredentials
+
+            try {
+                Update-SECSecret -SecretId $SecretNameURN -SecretString $AccessKeysJSON -Credential $msrCredentials
+            } catch {
+                throw $_
+            }
             $msg = "Created New Access Keys with AccessKeyID {0} for {1} and stored in secret {2}." -f $newAccessKey.AccessKeyId, $IamUserName, $SecretName
             Write-Host $msg
         }
         'Deactivate' {
-            Update-IAMAccessKey -UserName $IamUserName -AccessKeyId $AccessKeyID -Status Inactive
+            try {
+                Update-IAMAccessKey -UserName $IamUserName -AccessKeyId $AccessKeyID -Status Inactive
+            } catch {
+                throw $_
+            }
             $msg = "Inactivated Access Keys with AccessKeyID {0} for user {1}" -f $AccessKeyID, $IamUserName
             Write-Host $msg
         }
         'Delete' {
-            Remove-IAMAccessKey -UserName $IamUserName -AccessKeyId $AccessKeyID -Confirm:$false -Force
+            try {
+                Remove-IAMAccessKey -UserName $IamUserName -AccessKeyId $AccessKeyID -Confirm:$false -Force
+            } catch {
+                throw $_
+            }
             $msg = "Deleted Access Keys with AccessKeyID {0} for user {1}" -f $AccessKeyID, $IamUserName
         }
     }
