@@ -9,6 +9,10 @@
 # To include PowerShell modules with your Lambda function, like the AWS.Tools.S3 module, add a "#Requires" statement
 # indicating the module and version. If using an AWS.Tools.* module the AWS.Tools.Common module is also required.
 
+# Author: Cliff Williams
+# Copyright: Balfour Beatty US
+# Version: 2.0.3
+
 #
 #Requires -Modules @{ModuleName='AWS.Tools.Common';ModuleVersion='4.1.105'}
 #Requires -Modules @{ModuleName='AWS.Tools.IdentityManagement';ModuleVersion='4.1.105'}
@@ -20,7 +24,7 @@
 # Uncomment to send the input event to CloudWatch Logs
 # Write-Host (ConvertTo-Json -InputObject $LambdaInput -Compress -Depth 5)
 
-$ErrorActionPreference = Stop
+$ErrorActionPreference = 'Stop'
 
 Write-Host "Getting IAM Credential Log"
 Request-IAMCredentialReport -Force |Out-Null
@@ -88,7 +92,7 @@ function RotateKeys() {
         [string]$Action
     )
     #
-    # The Secret ARN is required if you are retrieveing Secrets cross account. 
+    # The Secret ARN is required if you are retrieving Secrets cross account. 
     # modify this to match your account that holds Secrets.
     $SecretNameURN = "arn:aws:secretsmanager:us-east-1:268928949034:secret:{0}" -f $SecretName
     switch ($Action) {
@@ -99,8 +103,8 @@ function RotateKeys() {
                 throw $_
             }
 
-            $AccessKeys.AccessKeyID = $newAccessKey.AccessKeyID
-            $AccessKeys.SecretAccessKey = $newAccessKey.SecretAccessKey
+            #$AccessKeys.AccessKeyID = $newAccessKey.AccessKeyID
+            #$AccessKeys.SecretAccessKey = $newAccessKey.SecretAccessKey
             $AccessKeysJSON = $newAccessKey | Select-Object AccessKeyID, SecretAccessKey | ConvertTo-Json -Compress
 
             try {
@@ -148,8 +152,8 @@ foreach ($iamUser in $iamUsers) {
             $iamAccount = Get-IAMUser $iamUser.User
             Write-Host "Beginning processing for IAM user:$($iamUser.User)"
         } catch {
-            #This most often occures when an account is deleted and the security report is not updated as of yet.
-            #Handle the error and contnue on to the next user.
+            #This most often occurs when an account is deleted and the security report is not updated as of yet.
+            #Handle the error and continue on to the next user.
             Continue
         }
         $tags = $iamAccount.Tags
@@ -157,13 +161,20 @@ foreach ($iamUser in $iamUsers) {
         If ($tags.Count -gt 0) {
             If ($tags.Key.IndexOf("SecretName") -gt -1) {
                 $secretName = $tags[$tags.Key.indexOf("SecretName")].Value
+            } else {
+                Write-Host "Secret name no define on IAM user. Exiting"
+                Continue
             }
         }
               
-        if ($iamUser.user.contains('@')) {
+        if ($iamUser.User.contains('@')) {
             $iamUserEmail = $IamUser.user
         } else {
             $iamUserEmail = $tags[$tags.Key.IndexOf("Notify")].Value
+            if (-not $iamUserEmail) {
+                Write-Host "Notify tag not set on IAM user account!"
+                Continue
+            }
         }
     }
     if (-not $iamUserEmail) { continue }
@@ -181,7 +192,7 @@ foreach ($iamUser in $iamUsers) {
             $passwordExpireDate = [datetime]::Parse($iamUser.password_next_rotation)
             #
             # If the password is expired send a notice informing the user,
-            # else if the password is less than 16 days from expiration send a notice informint the user.
+            # else if the password is less than 16 days from expiration send a notice informing the user.
             #
             if ($currentDate -gt $passwordExpireDate) {
                 $sendEmail = $true
@@ -201,7 +212,48 @@ foreach ($iamUser in $iamUsers) {
         # User is informed that they have a new keys in their secret.
         # The old keys are inactivated at 100 days, then deleted at 110 days.
         Write-Host "Retrieving Access Keys for IAM User $($iamUser.User)"
-        $AccessKeys = Get-IAMAccessKey -UserName $iamUser.User
+        $AccessKeys = Get-IAMAccessKey -UserName $iamUser.User | Sort-Object -Property CreateDate
+        
+        #Check if we are forcefully regenerating new keys for this user
+        if ($tags.Count -gt 0) {
+            $TagIndex = $tags.Key.IndexOf("GenerateNewKeys")
+            if ($TagIndex -gt -1) {
+                [Amazon.IdentityManagement.Model.Tag]$Tag = $Tags[$TagIndex]
+                if ($tag.Value.ToLower() -eq "true") {
+                    if ($AccessKeys.Count -gt 1) {
+                        # Delete the oldest key
+                        RotateKeys -IamUserName $iamUser.User -AccessKeyID $AccessKeys[0].AccessKeyId -Action:Delete
+
+                        # Deactivate the newest key, just in case something breaks we can re-activate
+                        RotateKeys -IamUserName $iamUser.User -AccessKeyID $AccessKeys[1].AccessKeyId -Action:Deactivate
+
+                    } Else {
+                        # Deactivate the current key, just in case something breaks we can re-activate
+                        RotateKeys -IamUserName $iamUser.User -AccessKeyID $AccessKeys.AccessKeyId -Action:Deactivate
+                    }
+                    # Generate new keys and update the secret.
+                    RotateKeys -IamUserName $iamUser.User -SecretName $secretName -Action:New
+
+                    # Update the tag "GenerateNewKeys" to false. (Add will overwrite the existing tag)                
+                    $Tag.Value = "false"
+                    Add-IAMUserTag -UserName $iamUser.User -Tag $Tag -Force                
+
+                    # Send email to Key owners and Administrators
+                    $KeyMsg = $ses_User_Msg -f $iamUser.User, $keyAge
+                    $body = $strbody -f $iamUser.User, $AccountId, $pwMsg, $keyMsg            
+                    
+                    Send-MailMessage -SmtpServer $SMTPServer -To $iamUserEmail -From $From -Subject $Subject -Body $body `
+                        -UseSsl -Credential $smtpCreds -Port 587    
+
+                    # write to the logs
+                    write-Host ("Will Send to $iamUserEmail`n`r`n`r" + $body)
+
+                    # Break out of the loop and process the nest IAM User.
+                    Continue
+                }
+            }
+        }
+
         foreach ($AccessKey in $AccessKeys) {
             [datetime]$ExpirationDate = $AccessKey.CreateDate.AddDays(80)
             [datetime]$deactivateDate = $AccessKey.CreateDate.AddDays(90)

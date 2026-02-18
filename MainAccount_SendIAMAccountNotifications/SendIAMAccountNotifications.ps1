@@ -18,7 +18,7 @@
 # Uncomment to send the input event to CloudWatch Logs
 # Write-Host (ConvertTo-Json -InputObject $LambdaInput -Compress -Depth 5)
 
-$ErrorActionPreference = Stop
+$ErrorActionPreference = 'Stop'
 
 # The credential log can be as much as 12 hours behind any changes.
 Write-Host "Getting IAM Credential Log"
@@ -85,7 +85,7 @@ function RotateKeys() {
         [string]$Action
     )
     #
-    # The Secret ARN is required if you are retrieveing Secrets cross account. 
+    # The Secret ARN is required if you are retrieving Secrets cross account. 
     # modify this to match your account that holds Secrets.
     $SecretNameURN = "arn:aws:secretsmanager:us-east-1:268928949034:secret:{0}" -f $SecretName
     switch ($Action) {
@@ -95,8 +95,8 @@ function RotateKeys() {
             } catch {
                 throw $_
             }
-            $AccessKeys.AccessKeyID = $newAccessKey.AccessKeyId
-            $AccessKeys.SecretAccessKey = $newAccessKey.SecretAccessKey
+            #$AccessKeys.AccessKeyID = $newAccessKey.AccessKeyId
+            #$AccessKeys.SecretAccessKey = $newAccessKey.SecretAccessKey
             $AccessKeysJSON = $newAccessKey | Select-Object AccessKeyID, SecretAccessKey | ConvertTo-Json -Compress
             try {
                 Update-SECSecret -SecretId $SecretNameURN -SecretString $AccessKeysJSON
@@ -143,8 +143,8 @@ foreach ($iamUser in $iamUsers) {
             $iamAccount = Get-IAMUser $iamUser.User
             Write-Host "Beginning processing for IAM user:$($iamUser.User)"
         } catch {
-            #This most often occures when an account is deleted and the security report is not updated as of yet.
-            #Handle the error and contnue on to the next user.
+            #This most often occurs when an account is deleted and the security report is not updated as of yet.
+            #Handle the error and continue on to the next user.
             Continue
         }
         $tags = $iamAccount.Tags
@@ -152,6 +152,9 @@ foreach ($iamUser in $iamUsers) {
         If ($tags.Count -gt 0) {
             If ($tags.Key.IndexOf("SecretName") -gt -1) {
                 $secretName = $tags[$tags.Key.indexOf("SecretName")].Value
+            } else {
+                Write-Host "Secret Name not set on IAM user. Exiting"
+                Continue
             }
         }
               
@@ -159,6 +162,10 @@ foreach ($iamUser in $iamUsers) {
             $iamUserEmail = $IamUser.user
         } else {
             $iamUserEmail = $tags[$tags.Key.IndexOf("Notify")].Value
+            if (-not $iamUserEmail) {
+                Write-Host "Notify tag not set on IAM User account!"
+                Continue
+            }
         }
     }
     if (-not $iamUserEmail) { continue }
@@ -176,7 +183,7 @@ foreach ($iamUser in $iamUsers) {
             $passwordExpireDate = [datetime]::Parse($iamUser.password_next_rotation)
             #
             # If the password is expired send a notice informing the user,
-            # else if the password is less than 16 days from expiration send a notice informint the user.
+            # else if the password is less than 16 days from expiration send a notice informing the user.
             #
             if ($currentDate -gt $passwordExpireDate) {
                 $sendEmail = $true
@@ -191,17 +198,17 @@ foreach ($iamUser in $iamUsers) {
             #Write-Host "$iamUserEmail : $Msg"
         }
         #
-        # The ses-smtp-User is a special IAM acccount for use to authenticate to AWS Simple Email Service (SES).
+        # The ses-smtp-User is a special IAM account for use to authenticate to AWS Simple Email Service (SES).
         # These keys cannot be rotated in the normal fashion. To do so will break SES.
         # To rotate these keys you must create a new SES user in the SES dashboard.
         # The new users keys must be stored in th3 secret used above.
-        # The name of the account is 'ses-smtp-user.' appended with a series of numbers devided by a dash.
+        # The name of the account is 'ses-smtp-user.' appended with a series of numbers deviled by a dash.
         # Here we check just that user user begins with 'ses-smtp-user' and continue the loop.
         If ($iamUser.User.StartsWith("ses-smtp-user")) {
             $AccessKeys = Get-IAMAccessKey -UserName $iamUser.User
             $AccessKey = $AccessKeys[0]
             [datetime]$ExpirationDate = $AccessKey.CreateDate.AddDays(80)
-            $keyAge = ($currentDate - $ExpirationDate).Days
+            $keyAge = ($ExpirationDate - $currentDate).Days
             if ($AccessKey.Status -eq "Active" -and $currentDate -gt $ExpirationDate) {
                 $KeyMsg = $ses_User_Msg -f $iamUser.User, $keyAge
                 $body = $strbody -f $iamUser.User, $AccountId, $pwMsg, $keyMsg            
@@ -209,8 +216,11 @@ foreach ($iamUser in $iamUsers) {
                 Send-MailMessage -SmtpServer $SMTPServer -To $iamUserEmail -From $From -Subject $Subject -Body $body `
                     -UseSsl -Credential $smtpCreds -Port 587    
                 #comment out for production
-                #write-Host ("Will Send to $iamUserEmail`n`r`n`r" + $body)
+                write-Host ("Will Send to $iamUserEmail`n`r`n`r" + $body)
 
+                Continue
+            }
+            if ($AccessKey.Status -eq "Inactive") {                
                 Continue
             }
         }
@@ -220,7 +230,47 @@ foreach ($iamUser in $iamUsers) {
         # User is informed that they have a new keys in their secret.
         # The old keys are inactivated at 100 days, then deleted at 110 days.
         Write-Host "Retrieving Access Keys for IAM User $($iamUser.User)"
-        $AccessKeys = Get-IAMAccessKey -UserName $iamUser.User
+        $AccessKeys = Get-IAMAccessKey -UserName $iamUser.User | Sort-Object -Property CreateDate
+
+        if ($tags.Count -gt 0) {
+            $TagIndex = $tags.Key.IndexOf("GenerateNewKeys")
+            if ($TagIndex -gt -1) {
+                [Amazon.IdentityManagement.Model.Tag]$Tag = $Tags[$TagIndex]
+                if ($tag.Value.ToLower() -eq "true") {
+                    if ($AccessKeys.Count -gt 1) {
+                        # Delete the oldest key
+                        RotateKeys -IamUserName $iamUser.User -AccessKeyID $AccessKeys[0].AccessKeyId -Action:Delete
+
+                        # Deactivate the newest key, just in case something breaks we can re-activate
+                        RotateKeys -IamUserName $iamUser.User -AccessKeyID $AccessKeys[1].AccessKeyId -Action:Deactivate
+
+                    } Else {
+                        # Deactivate the current key, just in case something breaks we can re-activate
+                        RotateKeys -IamUserName $iamUser.User -AccessKeyID $AccessKeys.AccessKeyId -Action:Deactivate
+                    }
+                    # Generate new keys and update the secret.
+                    RotateKeys -IamUserName $iamUser.User -SecretName $secretName -Action:New
+
+                    # Update the tag "GenerateNewKeys" to false. (Add will overwrite the existing tag)                
+                    $Tag.Value = "false"
+                    Add-IAMUserTag -UserName $iamUser.User -Tag $Tag -Force                
+
+                    # Send email to Key owners and Administrators
+                    $KeyMsg = $ses_User_Msg -f $iamUser.User, $keyAge
+                    $body = $strbody -f $iamUser.User, $AccountId, $pwMsg, $keyMsg            
+                    
+                    Send-MailMessage -SmtpServer $SMTPServer -To $iamUserEmail -From $From -Subject $Subject -Body $body `
+                        -UseSsl -Credential $smtpCreds -Port 587    
+
+                    # write to the logs
+                    write-Host ("Will Send to $iamUserEmail`n`r`n`r" + $body)
+
+                    # Break out of the loop and process the nest IAM User.
+                    Continue
+                }
+            }
+        }
+
         foreach ($AccessKey in $AccessKeys) {
             [datetime]$ExpirationDate = $AccessKey.CreateDate.AddDays(80)
             [datetime]$deactivateDate = $AccessKey.CreateDate.AddDays(90)
@@ -271,7 +321,8 @@ foreach ($iamUser in $iamUsers) {
             $body = $strbody -f $iamUser.User, $AccountId, $pwMsg, $keyMsg            
             #comment for testing
             Write-Host "Sending Message!"
-            Send-MailMessage -SmtpServer $SMTPServer -To $iamUserEmail -From $From -Subject $Subject -Body $body -UseSsl -Credential $smtpCreds -Port 587    
+            #Send-MailMessage -SmtpServer $SMTPServer -To $iamUserEmail -From $From -Subject $Subject -Body $body -UseSsl -Credential $smtpCreds -Port 587    
+            Write-Host "Sent message to $iamUserEmail.`n`r $body"
             #comment out for production
             #write-Host ("Will Send to $iamUserEmail`n`r`n`r" + $body)
 

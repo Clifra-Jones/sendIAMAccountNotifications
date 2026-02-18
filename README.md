@@ -2,20 +2,20 @@
 
 The powershell scripts in this repository are used in AWS LAMBDA function to perform the following tasks.
 
-1. Inform IAM users that thier password are about to expire or already have expired.
+1. Inform IAM users that their password are about to expire or already have expired.
 2. Rotate IAM Access Keys and store the newly created keys in AWS Secrets Manager.
 
-These scripts were designed to operate withing my organization but can be easily edited to function in your AWS opranization.  
+These scripts were designed to operate withing my organization but can be easily edited to function in your AWS organization.  
 
 There are 2 scripts:
 
-1. Under MainAccount_SendIAMNotifications is a script for use in your main AWS Account. This is the account that holds your secrets.
+1. [MainAccount_SendIAMNotifications](https://github.com/Clifra-Jones/sendIAMAccountNotifications/blob/master/MainAccount_SendIAMAccountNotifications/SendIAMAccountNotifications.ps1) is a script for use in your main AWS Account. This is the account that holds your secrets.
 It is AWS best practice to keep all your secrets in one main account, but this is entirely up to you.
-2. Under CrossAccount_SendIAMNotifications is a script designed to retrieve secrets from your main account.
+2. [CrossAccount_SendIAMNotifications](https://github.com/Clifra-Jones/sendIAMAccountNotifications/blob/master/CrossAccount_SendIAMAccountNotifications/SendIAMAccountNotifications.ps1) is a script designed to retrieve secrets from your main account.
 
 These scripts utilize role assumptions so there are a few places where you will need to replace the role ARN with the one for your organization.
 
-There are also permission json files you can use for granting permission. Replace any values inside {} with approriate ones from your organization.
+There are also permission json files you can use for granting permission. Replace any values inside {} with appropriate ones from your organization.
 
 It is assumed you have a working knowledge of the following:  
 PowerShell  
@@ -41,12 +41,12 @@ The script will check the age of the keys in IAM and perform the following funct
 111 Days: Delete the keys.  
 
 ## Secrets Manager, KMS and IAM
-For every user that is granted access keys a Secret must be created in Secrets Manager. 
+For every user that is granted access keys a Secret must be created in Secrets Manager.
 
 ### Secrets Manager
 The IAM User should have a Secret in Secrets Manager setup to hold their access Keys.  
 
-**SecretName**   
+**SecretName**
 This should be something identifiable such as the IAM Users's username. If this is for a cross account append with an account identifier, i.e. _devops.
 
 **Encryption Key**  
@@ -57,7 +57,7 @@ The secret value is a Key/Value pair in the following format.
 AccessKeyId     : IAM Access Key ID
 SecretAccessKey : IAM Secret Access Key
 
-The Key names are case sensative so make sure the case is correct when creating the secret value.
+The Key names are case sensitive so make sure the case is correct when creating the secret value.
 
 **Permissions**  
 Grant the IAM User the 'secretsmanager:GetSecretValue' permission.  
@@ -70,29 +70,29 @@ In order to decrypt secrets from another account you need use a custom KMS key t
 Create an understandable alias to identify this key.
 
 **Key Rotation**  
-Set key rotion to automatic.
+Set key rotation to automatic.
 
 **Key policy**  
 Allow account from your other AWS Account to use this key.  
 [KMS Key Policy](./policies/KMS_Key_Policy.json)
 
-### IAM Users, Groups and Roles.
+### IAM Users, Groups and Roles
 
-#### IAM Users  
-Each user with a managed IAM Access Key must have a tag named 'SecretName' whose value is the secret name of thier associated secret.
+#### IAM Users
+Each user with a managed IAM Access Key must have a tag named 'SecretName' whose value is the secret name of their associated secret.
 
-#### IAM Groups  
+#### IAM Groups
 In each of your accounts create a group named 'SecretManagerUsers', any IAM user who will need to retrieve secrets must be a member of this group.
 
 **Permissions**  
 This group should have the following permissions applied.
-(I use inline permissions to prevent these permissions from inadvertantly being applied to other users/groups)
+(I use inline permissions to prevent these permissions from inadvertently being applied to other users/groups)
 
 [Use Secrets Manager KMS Key](./policies/KMS_KEY_Access.json)  
-This policy only applies for cross account access. Use this policy in accounts that need to access secrets stored in another account. 
+This policy only applies for cross account access. Use this policy in accounts that need to access secrets stored in another account.
 
 [IAM User Read Self](./policies/IAM_User_Read_Self.json)  
-This policy allows the use to read thier own IAM Account.  
+This policy allows the use to read their own IAM Account.  
 (Note: the text '${aws:username}' should not be changed.)  
 
 [Secrets Manager Get Secret Value](./policies/Secrets_Manager_get_Secret_Value.json)  
@@ -132,14 +132,18 @@ Add the following inline policies.
 You cannot edit PowerShell scripts in the Lambda console to create your Lambda function. Use the Publish-AWSPowerShellLambda Powershell command.  
 If you have a lot of roles in your IAM Roles it is probably best to pre-create your Lambda execution role and supply the ARN with this command.
 
+```powershell
+Publish-AWSPowerShellLambda -Name [Function Name] -Region [AWS Region] -ScriptPath [Path to script file] -IAMRoleArn [ARN of Lambda role]
+```
+
 **Triggers**  
-Create an Event Bridge trigger to execute your function. Once per day is sufficuent.
+Create an Event Bridge trigger to execute your function. Once per day is sufficient.
 
 **Permissions**  
 Your Lambda execution role should be already assigned when you published your function.
 
 **Asynchronous Invocation**  
-Make sure to set "Retry attemtps" to 0. This will prevent the function from running again in the case of an error. (The default is 3)
+Make sure to set "Retry attempts" to 0. This will prevent the function from running again in the case of an error. (The default is 3)
 
 ## Simple Mail Service (SES)
 Setup SES and verify your domains.  
@@ -155,6 +159,5 @@ In the Main Account script there is a section specifically used for this user.
 You cannot generate new keys in IAM for this user. THEY WILL NOT WORK WITH SES. Therefor we exempt this user from any Access Key management. The default name for the SES User starts with 'ses-smtp-user'. If you change this name then modify the code where it checks for this name.
 
 ## Cloud Watch
-Create a Cloud Watch Alarm for Lambda function error with the threshold of: Errors > 0 for 1 datapoints within 1 days.
+Create a Cloud Watch Alarm for Lambda function error with the threshold of: Errors > 0 for 1 data points within 1 days.
 Subscribe an SNS topic to send you emails if the alarm occurs.
-
